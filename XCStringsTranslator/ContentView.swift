@@ -2,7 +2,7 @@
 //  ContentView.swift
 //  XCStringsTranslator
 //
-//  Main window with file drop zone and info display
+//  Main window with full translation workflow
 //
 
 import SwiftUI
@@ -11,19 +11,57 @@ struct ContentView: View {
     @StateObject private var viewModel = TranslatorViewModel()
     
     var body: some View {
-        VStack(spacing: 0) {
-            if viewModel.document == nil {
-                // File drop zone
-                FileDropZone { url in
-                    viewModel.loadFile(url)
+        ScrollView {
+            VStack(spacing: 20) {
+                if viewModel.document == nil {
+                    // File drop zone
+                    FileDropZone { url in
+                        viewModel.loadFile(url)
+                    }
+                    .frame(minHeight: 300)
+                } else if viewModel.isComplete, let stats = viewModel.stats {
+                    // Results view
+                    ResultsView(
+                        stats: stats,
+                        outputFile: viewModel.outputFile,
+                        onOpenFinder: viewModel.openInFinder,
+                        onOpenXcode: viewModel.openInXcode,
+                        onNewTranslation: viewModel.reset
+                    )
+                } else if viewModel.isTranslating {
+                    // Progress view
+                    fileInfoSection
+                    
+                    TranslationProgressView(
+                        progress: viewModel.progress,
+                        onCancel: viewModel.cancelTranslation
+                    )
+                } else {
+                    // Configuration view
+                    fileInfoSection
+                    
+                    ProviderSelectionView(
+                        selectedProvider: $viewModel.selectedProvider,
+                        apiKey: $viewModel.apiKey,
+                        deeplxEndpoint: $viewModel.deeplxEndpoint
+                    )
+                    
+                    if let analysis = viewModel.fileAnalysis {
+                        LanguageSelectionView(
+                            availableLanguages: analysis.availableLanguages,
+                            sourceLanguage: analysis.sourceLanguage,
+                            selectedLanguages: $viewModel.selectedLanguages
+                        )
+                    }
+                    
+                    OptionsView(skipOptions: $viewModel.skipOptions)
+                    
+                    translateButton
                 }
-                .padding(24)
-            } else {
-                // File info display
-                fileInfoView
             }
+            .padding(24)
         }
-        .frame(minWidth: 500, minHeight: 400)
+        .frame(minWidth: 600, minHeight: 500)
         .alert("Error", isPresented: .init(
             get: { viewModel.errorMessage != nil },
             set: { if !$0 { viewModel.errorMessage = nil } }
@@ -36,78 +74,56 @@ struct ContentView: View {
         }
     }
     
-    // MARK: - File Info View
+    // MARK: - File Info Section
     
-    private var fileInfoView: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                // Header with file name
-                fileHeader
+    private var fileInfoSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            // Header
+            HStack {
+                Image(systemName: "doc.text.fill")
+                    .font(.title)
+                    .foregroundColor(.accentColor)
                 
-                Divider()
-                
-                // File statistics
-                if let analysis = viewModel.fileAnalysis {
-                    statisticsSection(analysis)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(viewModel.inputFile?.lastPathComponent ?? "Unknown File")
+                        .font(.title2)
+                        .fontWeight(.semibold)
+                    
+                    Text(viewModel.inputFile?.deletingLastPathComponent().path ?? "")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
                 
-                Divider()
-                
-                // Actions placeholder (for future phases)
-                actionsSection
-                
                 Spacer()
-            }
-            .padding(24)
-        }
-    }
-    
-    private var fileHeader: some View {
-        HStack {
-            Image(systemName: "doc.text.fill")
-                .font(.title)
-                .foregroundColor(.accentColor)
-            
-            VStack(alignment: .leading, spacing: 4) {
-                Text(viewModel.inputFile?.lastPathComponent ?? "Unknown File")
-                    .font(.title2)
-                    .fontWeight(.semibold)
                 
-                Text(viewModel.inputFile?.deletingLastPathComponent().path ?? "")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                if !viewModel.isTranslating {
+                    Button {
+                        viewModel.reset()
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.title2)
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Close file")
+                }
             }
             
-            Spacer()
-            
-            Button {
-                viewModel.reset()
-            } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.title2)
-                    .foregroundStyle(.secondary)
-            }
-            .buttonStyle(.plain)
-            .help("Close file")
-        }
-    }
-    
-    private func statisticsSection(_ analysis: FileAnalysis) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("📄 File Information")
-                .font(.headline)
-            
-            LazyVGrid(columns: [
-                GridItem(.flexible()),
-                GridItem(.flexible())
-            ], alignment: .leading, spacing: 12) {
-                StatRow(icon: "globe", label: "Source Language", value: languageName(for: analysis.sourceLanguage))
-                StatRow(icon: "number", label: "Total Strings", value: "\(analysis.totalStrings)")
-                StatRow(icon: "list.bullet", label: "Languages", value: "\(analysis.availableLanguages.count)")
-                StatRow(icon: "checkmark.circle", label: "Already Translated", value: "\(analysis.alreadyTranslated)")
-                StatRow(icon: "xmark.circle", label: "Do Not Translate", value: "\(analysis.shouldNotTranslate)")
-                StatRow(icon: "arrow.triangle.2.circlepath", label: "Need Translation", value: "\(analysis.needsTranslation)")
+            // Statistics
+            if let analysis = viewModel.fileAnalysis {
+                LazyVGrid(columns: [
+                    GridItem(.flexible()),
+                    GridItem(.flexible()),
+                    GridItem(.flexible())
+                ], spacing: 12) {
+                    StatCard(icon: "globe", label: "Source", value: languageName(for: analysis.sourceLanguage))
+                    StatCard(icon: "number", label: "Strings", value: "\(analysis.totalStrings)")
+                    StatCard(icon: "list.bullet", label: "Languages", value: "\(analysis.availableLanguages.count)")
+                    StatCard(icon: "checkmark.circle", label: "Translated", value: "\(analysis.alreadyTranslated)")
+                    StatCard(icon: "xmark.circle", label: "No Translate", value: "\(analysis.shouldNotTranslate)")
+                    StatCard(icon: "arrow.triangle.2.circlepath", label: "To Translate", value: "\(viewModel.stringsToTranslate)")
+                }
             }
         }
         .padding()
@@ -115,27 +131,45 @@ struct ContentView: View {
         .clipShape(RoundedRectangle(cornerRadius: 12))
     }
     
-    private var actionsSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("🚀 Translation")
-                .font(.headline)
-            
-            Text("Translation provider selection will be available in the next phase.")
-                .foregroundStyle(.secondary)
-            
+    // MARK: - Translate Button
+    
+    private var translateButton: some View {
+        VStack(spacing: 12) {
             Button {
-                // Placeholder for future translation action
+                viewModel.translate()
             } label: {
-                Label("Translate", systemImage: "arrow.triangle.2.circlepath")
-                    .frame(maxWidth: .infinity)
+                HStack {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                    
+                    Text("Translate \(viewModel.selectedLanguages.count) Languages")
+                    
+                    if viewModel.estimatedCost > 0 {
+                        Text("(~$\(String(format: "%.2f", viewModel.estimatedCost)))")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("(FREE)")
+                            .foregroundStyle(.green)
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 8)
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
-            .disabled(true)
+            .disabled(!viewModel.canTranslate)
+            
+            if !viewModel.canTranslate {
+                if viewModel.selectedProvider == .gemini && viewModel.apiKey.isEmpty {
+                    Text("Please enter your Gemini API key")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                } else if viewModel.selectedLanguages.isEmpty {
+                    Text("Please select at least one target language")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+            }
         }
-        .padding()
-        .background(Color.secondary.opacity(0.1))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
     }
     
     // MARK: - Helpers
@@ -147,25 +181,30 @@ struct ContentView: View {
 
 // MARK: - Supporting Views
 
-struct StatRow: View {
+struct StatCard: View {
     let icon: String
     let label: String
     let value: String
     
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: icon)
-                .frame(width: 20)
-                .foregroundStyle(.secondary)
-            
-            Text(label)
-                .foregroundStyle(.secondary)
-            
-            Spacer()
+        VStack(spacing: 4) {
+            HStack(spacing: 4) {
+                Image(systemName: icon)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                
+                Text(label)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             
             Text(value)
-                .fontWeight(.medium)
+                .font(.headline)
         }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 8)
+        .background(Color.secondary.opacity(0.1))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 }
 
